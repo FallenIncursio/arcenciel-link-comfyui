@@ -1,0 +1,4 @@
+requests>=2.31
+websocket-client>=1.6
+Pillow
+aiohttp>=3.9
