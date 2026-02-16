@@ -1,0 +1,23 @@
+[project]
+name = "arcenciel-link"
+description = "Bring your ArcEnCiel models straight into ComfyUI with one click. Includes Link Key support, remote worker control, inventory sync, and sidecar generation."
+version = "1.0.0"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+  "requests>=2.31",
+  "websocket-client>=1.6",
+  "Pillow",
+  "aiohttp>=3.9",
+]
+
+[project.urls]
+Repository = "https://github.com/FallenIncursio/arcenciel-link-comfyui"
+Documentation = "https://github.com/FallenIncursio/arcenciel-link-comfyui#readme"
+"Bug Tracker" = "https://github.com/FallenIncursio/arcenciel-link-comfyui/issues"
+
+[tool.comfy]
+PublisherId = "fallenincursio"
+DisplayName = "ArcEnCiel Link"
+
