@@ -9,8 +9,9 @@ from typing import Dict, Generator, Iterable, List
 import requests
 
 from aec_link_config import get_storage_dir
+from aec_link_version import VERSION
 
-_DEFAULT_USER_AGENT = "ArcEnCiel-Link/ComfyUI"
+_DEFAULT_USER_AGENT = f"ArcEnCiel-Link-ComfyUI/{VERSION}"
 _SESSION: requests.Session | None = None
 
 _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9 _.,#@!$%^&()+=\u00A0-\u024F-]+$")
@@ -42,9 +43,22 @@ def get_http_session() -> requests.Session:
     return _SESSION
 
 
-def download_file(url: str, dst: Path, progress_cb) -> None:
+def download_file(
+    url: str,
+    dst: Path,
+    progress_cb,
+    *,
+    request_headers: dict[str, str] | None = None,
+    allow_redirects: bool = True,
+) -> None:
     session = get_http_session()
-    with session.get(url, stream=True, timeout=60) as r:
+    with session.get(
+        url,
+        stream=True,
+        timeout=60,
+        headers=request_headers,
+        allow_redirects=allow_redirects,
+    ) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0))
         chunk = 1024 * 1024
@@ -241,13 +255,12 @@ def list_model_hashes() -> List[str]:
 
 def update_cached_hash(path: Path, hash_value: str) -> List[str]:
     resolved = path.resolve()
+    try:
+        mtime = int(resolved.stat().st_mtime)
+    except FileNotFoundError:
+        return list_model_hashes()
     with _CACHE_LOCK:
         cache = _ensure_cache()
-        try:
-            mtime = int(resolved.stat().st_mtime)
-        except FileNotFoundError:
-            return list_model_hashes()
-
         cache[str(resolved)] = {"mtime": mtime, "hash": hash_value}
         _save_cache(cache)
 

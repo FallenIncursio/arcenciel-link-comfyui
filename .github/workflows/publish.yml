@@ -3,10 +3,7 @@ name: Publish to Comfy registry
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-    paths:
-      - "pyproject.toml"
+    tags: ["v*.*.*"]
 
 permissions:
   contents: read
@@ -20,8 +17,20 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, tomllib
+          from aec_link_version import VERSION
+          tag = os.environ["RELEASE_TAG"].removeprefix("v")
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          if tag != VERSION or tag != project:
+              raise SystemExit(f"version mismatch: tag={tag}, runtime={VERSION}, project={project}")
+          PY
+
       - name: Publish Custom Node
-        uses: Comfy-Org/publish-node-action@v1
+        uses: Comfy-Org/publish-node-action@7578cdb0c1410f2515e6f9b1443c6859cab94f05
         with:
           personal_access_token: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
-

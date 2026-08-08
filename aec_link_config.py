@@ -5,14 +5,13 @@ from pathlib import Path
 _DEFAULT_CONFIG = {
     "base_url": "https://link.arcenciel.io/api/link",
     "link_key": "",
-    "api_key": "",
     "enabled": False,
     "min_free_mb": 2048,
     "max_retries": 5,
     "backoff_base": 2,
     "save_html_preview": False,
     "allow_private_origins": False,
-    "bridge_port": 8000,
+    "bridge_port": 0,
 }
 
 _DEV_URL = "http://localhost:3000/api/link"
@@ -42,13 +41,21 @@ def get_storage_dir() -> Path:
     return path
 
 
+def _write_private_json(path: Path, payload: dict) -> None:
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    try:
+        temporary.chmod(0o600)
+    except OSError:
+        pass
+    os.replace(temporary, path)
+
+
 def _apply_env_overrides(cfg: dict) -> None:
     if os.getenv("ARCENCIEL_LINK_URL"):
         cfg["base_url"] = os.getenv("ARCENCIEL_LINK_URL", "").strip().rstrip("/")
     if os.getenv("ARCENCIEL_LINK_KEY"):
         cfg["link_key"] = os.getenv("ARCENCIEL_LINK_KEY", "").strip()
-    if os.getenv("ARCENCIEL_API_KEY"):
-        cfg["api_key"] = os.getenv("ARCENCIEL_API_KEY", "").strip()
 
 
 def load_config() -> dict:
@@ -58,7 +65,11 @@ def load_config() -> dict:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
+                retired_credential_present = "api_key" in data
+                data.pop("api_key", None)
                 cfg.update(data)
+                if retired_credential_present:
+                    _write_private_json(path, data)
         except Exception:
             pass
 
@@ -76,4 +87,5 @@ def save_config(cfg: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = dict(cfg)
     payload.pop("_dev_mode", None)
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    payload.pop("api_key", None)
+    _write_private_json(path, payload)

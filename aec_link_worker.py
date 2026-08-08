@@ -11,11 +11,12 @@ import shutil
 import sys
 import threading
 import time
+from html import escape
 from io import BytesIO
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from textwrap import dedent
-from urllib.parse import urljoin, urlparse, urlunparse, unquote
+from urllib.parse import unquote, urljoin, urlparse, urlunparse
 
 import websocket
 
@@ -29,6 +30,7 @@ from aec_link_utils import (
     sha256_of_file,
     update_cached_hash,
 )
+from aec_link_version import CAPABILITIES, CLIENT_ID, PROTOCOL_VERSION, VERSION
 
 try:
     from PIL import Image
@@ -50,7 +52,6 @@ DEV_MODE = bool(_cfg.get("_dev_mode"))
 BASE_URL = ""
 _WS_URL = ""
 LINK_KEY = ""
-API_KEY = ""
 MIN_FREE_MB = 2048
 MAX_RETRIES = 5
 BACKOFF_BASE = 2
@@ -99,9 +100,7 @@ def _get_logger():
     if _LOGGER is not None:
         return _LOGGER
     try:
-        handler = RotatingFileHandler(
-            _LOG_FILE, maxBytes=262_144, backupCount=1, encoding="utf-8"
-        )
+        handler = RotatingFileHandler(_LOG_FILE, maxBytes=262_144, backupCount=1, encoding="utf-8")
         formatter = logging.Formatter("%(asctime)s %(message)s")
         handler.setFormatter(formatter)
         logger = logging.getLogger("arcenciel_link.client")
@@ -130,6 +129,10 @@ def _normalise_base_url(raw: str, *, allow_insecure: bool) -> str:
         parsed = urlparse(trimmed)
     if parsed.scheme not in ("https", "http"):
         raise ValueError("base_url must start with https://")
+    if not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("base_url must not contain credentials and must include a host")
+    if parsed.query or parsed.fragment:
+        raise ValueError("base_url must not contain a query or fragment")
     if parsed.scheme == "http" and not allow_insecure:
         secure = parsed._replace(scheme="https")
         secure_url = urlunparse(secure)
@@ -143,10 +146,7 @@ def _normalise_base_url(raw: str, *, allow_insecure: bool) -> str:
 
 def _refresh_ws_url() -> None:
     global _WS_URL
-    _WS_URL = (
-        BASE_URL.replace("https://", "wss://").replace("http://", "ws://").rstrip("/")
-        + "/ws"
-    )
+    _WS_URL = BASE_URL.replace("https://", "wss://").replace("http://", "ws://").rstrip("/") + "/ws"
 
 
 def _encode_protocol_value(value: str) -> str:
@@ -159,8 +159,6 @@ def _encode_protocol_value(value: str) -> str:
 def _ws_subprotocols() -> list[str] | None:
     if LINK_KEY.strip():
         return [f"aec-link.link-key.{_encode_protocol_value(LINK_KEY)}"]
-    if API_KEY.strip():
-        return [f"aec-link.api-key.{_encode_protocol_value(API_KEY)}"]
     return None
 
 
@@ -174,10 +172,8 @@ def _display_target() -> str:
     return host
 
 
-def update_credentials(
-    *, base_url: str | None = None, link_key: str | None = None, api_key: str | None = None
-) -> None:
-    global BASE_URL, LINK_KEY, API_KEY, _credentials_dirty, _suspend_until, _suspend_notice_logged
+def update_credentials(*, base_url: str | None = None, link_key: str | None = None) -> None:
+    global BASE_URL, LINK_KEY, _credentials_dirty, _suspend_until, _suspend_notice_logged
     ws_needs_refresh = False
     credentials_changed = False
 
@@ -200,13 +196,6 @@ def update_credentials(
             _credentials_dirty = True
             credentials_changed = True
 
-    if api_key is not None:
-        stripped = api_key.strip()
-        if stripped != API_KEY:
-            API_KEY = stripped
-            _credentials_dirty = True
-            credentials_changed = True
-
     if ws_needs_refresh:
         _refresh_ws_url()
 
@@ -226,7 +215,6 @@ def _apply_config(cfg: dict) -> None:
     update_credentials(
         base_url=cfg.get("base_url", BASE_URL),
         link_key=cfg.get("link_key", ""),
-        api_key=cfg.get("api_key", ""),
     )
 
 
@@ -242,11 +230,14 @@ def _sanitize_link_key(value):
 
 
 def headers() -> dict:
+    request_headers = {
+        "x-arcenciel-link-client": f"{CLIENT_ID}/{VERSION}",
+        "x-arcenciel-link-protocol": str(PROTOCOL_VERSION),
+        "x-arcenciel-link-capabilities": ",".join(CAPABILITIES),
+    }
     if LINK_KEY:
-        return {"x-link-key": LINK_KEY}
-    if API_KEY:
-        return {"x-api-key": API_KEY}
-    return {}
+        request_headers["x-link-key"] = LINK_KEY
+    return request_headers
 
 
 def _send_ws_payload(payload: dict, *, default_type: str | None = None) -> None:
@@ -266,14 +257,23 @@ def _send_ws_payload(payload: dict, *, default_type: str | None = None) -> None:
 def _send_worker_state(running: bool | None = None) -> None:
     if running is None:
         running = RUNNING.is_set()
-    _send_ws_payload({"type": "worker_state", "running": bool(running)})
+    _send_ws_payload(
+        {
+            "type": "worker_state",
+            "running": bool(running),
+            "client": CLIENT_ID,
+            "clientVersion": VERSION,
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": list(CAPABILITIES),
+        }
+    )
 
 
 def _send_control_ack(payload: dict) -> None:
     _send_ws_payload(payload, default_type="control_ack")
 
 
-def _apply_worker_state(enable: bool, *, link_key=None, api_key=None) -> bool:
+def _apply_worker_state(enable: bool, *, link_key=None) -> bool:
     cfg = load_config()
     changed = False
 
@@ -281,12 +281,6 @@ def _apply_worker_state(enable: bool, *, link_key=None, api_key=None) -> bool:
     if sanitized_link is not None and sanitized_link != cfg.get("link_key", ""):
         cfg["link_key"] = sanitized_link
         changed = True
-
-    if api_key is not None:
-        stripped_api = api_key.strip() if isinstance(api_key, str) else ""
-        if stripped_api != cfg.get("api_key", ""):
-            cfg["api_key"] = stripped_api
-            changed = True
 
     if cfg.get("enabled") != bool(enable):
         cfg["enabled"] = bool(enable)
@@ -309,8 +303,8 @@ def _apply_worker_state(enable: bool, *, link_key=None, api_key=None) -> bool:
     return RUNNING.is_set()
 
 
-def apply_worker_state(enable: bool, *, link_key: str | None = None, api_key: str | None = None) -> bool:
-    return _apply_worker_state(enable, link_key=link_key, api_key=api_key)
+def apply_worker_state(enable: bool, *, link_key: str | None = None) -> bool:
+    return _apply_worker_state(enable, link_key=link_key)
 
 
 def _set_connection_state(state: str, message: str) -> None:
@@ -375,7 +369,7 @@ def _on_close(ws, code=None, msg=None) -> None:
     if code == WS_CLOSE_CODE_UNAUTHORIZED:
         _set_connection_state(
             "blocked",
-            "[AEC-LINK] authentication failed; update API key or link key and re-enable the worker.",
+            "[AEC-LINK] authentication failed; update the Link Key and re-enable the worker.",
         )
         set_connection_enabled(False, silent=True)
         return
@@ -384,9 +378,7 @@ def _on_close(ws, code=None, msg=None) -> None:
         wait_seconds = _parse_retry_after(reason_text) or _DEFAULT_RATE_LIMIT_WAIT
         _suspend_until = time.monotonic() + wait_seconds
         _suspend_notice_logged = False
-        _set_connection_state(
-            "blocked", f"[AEC-LINK] rate limited; retrying in {int(wait_seconds)}s."
-        )
+        _set_connection_state("blocked", f"[AEC-LINK] rate limited; retrying in {int(wait_seconds)}s.")
         return
 
     if code == WS_CLOSE_CODE_SERVICE_DISABLED:
@@ -432,13 +424,12 @@ def _handle_control(msg: dict) -> None:
         response["requestId"] = request_id
     if command == "set_worker_state":
         raw_enable = msg.get("enable")
-        enable = not (raw_enable in (False, "false", 0))
+        enable = raw_enable not in (False, "false", 0)
         response["enable"] = enable
         try:
             running = _apply_worker_state(
                 enable,
                 link_key=msg.get("linkKey"),
-                api_key=msg.get("apiKey"),
             )
             response.update({"ok": True, "running": running})
         except Exception as exc:
@@ -522,9 +513,7 @@ def _ensure_socket() -> None:
                 remaining = _suspend_until - time.monotonic()
                 if remaining > 0:
                     if not _suspend_notice_logged:
-                        print(
-                            f"[AEC-LINK] waiting {int(remaining)}s before reconnect..."
-                        )
+                        print(f"[AEC-LINK] waiting {int(remaining)}s before reconnect...")
                         _debug(f"suspend_until active, {remaining:.1f}s remaining")
                         _suspend_notice_logged = True
                     time.sleep(min(remaining, 5))
@@ -536,15 +525,18 @@ def _ensure_socket() -> None:
             headers: list[str] = []
             if LINK_KEY:
                 headers.append(f"x-link-key: {LINK_KEY}")
-            elif API_KEY:
-                headers.append(f"x-api-key: {API_KEY}")
+            headers.extend(
+                [
+                    f"x-arcenciel-link-client: {CLIENT_ID}/{VERSION}",
+                    f"x-arcenciel-link-protocol: {PROTOCOL_VERSION}",
+                    f"x-arcenciel-link-capabilities: {','.join(CAPABILITIES)}",
+                ]
+            )
             query = "?" + "&".join(params)
             url = _WS_URL + query
             protocols = _ws_subprotocols()
             try:
-                _set_connection_state(
-                    "connecting", f"[AEC-LINK] connecting to {_display_target()}"
-                )
+                _set_connection_state("connecting", f"[AEC-LINK] connecting to {_display_target()}")
                 _debug(f"connecting via {url}")
                 _sock = websocket.WebSocketApp(
                     url,
@@ -562,17 +554,13 @@ def _ensure_socket() -> None:
                 _set_connection_state("error", "[AEC-LINK] connection error")
                 msg = str(e)
                 if msg != _last_error:
-                    print(
-                        "[AEC-LINK] websocket reconnect failed:", msg, file=sys.stderr
-                    )
+                    print("[AEC-LINK] websocket reconnect failed:", msg, file=sys.stderr)
                     _last_error = msg
                     _debug(f"websocket reconnect failed: {msg}")
             finally:
                 _open_evt.clear()
                 _sock = None
-            delay = min(
-                _RECONNECT_MAX_DELAY, _RECONNECT_BASE_DELAY * (2**_reconnect_attempts)
-            )
+            delay = min(_RECONNECT_MAX_DELAY, _RECONNECT_BASE_DELAY * (2**_reconnect_attempts))
             _reconnect_attempts = min(_reconnect_attempts + 1, 6)
             _debug(f"reconnect back-off: {delay:.1f}s")
             time.sleep(delay)
@@ -641,11 +629,7 @@ def report_progress(job_id: int, *, progress: int = None, state: str = None, mes
         if state == "DONE":
             _sock.send('{"type":"poll"}')
     else:
-        payload = {
-            k: v
-            for k, v in [("progress", progress), ("state", state), ("message", message)]
-            if v is not None
-        }
+        payload = {k: v for k, v in [("progress", progress), ("state", state), ("message", message)] if v is not None}
         SESSION.patch(
             f"{BASE_URL}/queue/{job_id}/progress",
             json=payload,
@@ -689,9 +673,7 @@ def force_reconnect() -> None:
     _debug("force_reconnect() invoked")
     if _suspend_until and time.monotonic() < _suspend_until:
         remaining = _suspend_until - time.monotonic()
-        print(
-            f"[AEC-LINK] reconnect paused for {int(remaining)}s due to previous error."
-        )
+        print(f"[AEC-LINK] reconnect paused for {int(remaining)}s due to previous error.")
         _debug(f"force_reconnect blocked by suspend_until ({remaining:.1f}s)")
         return
     if not _socket_enabled:
@@ -725,16 +707,54 @@ def force_reconnect() -> None:
         pass
 
 
-def _download_with_retry(url: str, tmp: Path, progress_cb) -> None:
+def _private_download_options(job: dict, url: str) -> tuple[dict[str, str], bool]:
+    grant = job.get("downloadGrant")
+    grant_header = job.get("downloadGrantHeader")
+    if grant is None and grant_header is None:
+        return {}, True
+    if grant_header != "x-arcenciel-link-grant":
+        raise RuntimeError("Unsupported private download grant header")
+    if not isinstance(grant, str) or not grant or len(grant) > 4096:
+        raise RuntimeError("Invalid private download grant")
+    if any(ord(char) < 0x21 or ord(char) > 0x7E for char in grant):
+        raise RuntimeError("Invalid private download grant")
+
+    target = urlparse(url)
+    configured = urlparse(BASE_URL)
+    if target.username or target.password or target.fragment:
+        raise RuntimeError("Private download URL contains forbidden components")
+    if target.scheme != configured.scheme or target.netloc != configured.netloc:
+        raise RuntimeError("Private download URL does not match the configured Arc en Ciel origin")
+    if target.scheme != "https" and not DEV_MODE:
+        raise RuntimeError("Private downloads require HTTPS")
+    if not target.path.startswith("/api/link/queue/"):
+        raise RuntimeError("Private download URL has an unexpected path")
+    return {grant_header: grant}, False
+
+
+def _download_with_retry(
+    url: str,
+    tmp: Path,
+    progress_cb,
+    *,
+    request_headers: dict[str, str] | None = None,
+    allow_redirects: bool = True,
+) -> None:
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            download_file(url, tmp, progress_cb)
+            download_file(
+                url,
+                tmp,
+                progress_cb,
+                request_headers=request_headers,
+                allow_redirects=allow_redirects,
+            )
             return
         except Exception:
             tmp.unlink(missing_ok=True)
             if attempt == MAX_RETRIES:
                 raise
-            time.sleep(BACKOFF_BASE ** attempt + random.uniform(0, 1))
+            time.sleep(BACKOFF_BASE**attempt + random.uniform(0, 1))
 
 
 _RND_PREFIX = re.compile(
@@ -821,7 +841,7 @@ def _write_info_json(meta: dict, sha_local: str, preview_name: str | None, model
 
 
 def _write_html(meta: dict, preview_name: str | None, model_path: Path) -> None:
-    title = meta.get("modelTitle", "ArcEnCiel Model")
+    title = escape(str(meta.get("modelTitle", "ArcEnCiel Model")))
     html = dedent(
         f"""
         <!doctype html><html lang="en"><meta charset="utf-8">
@@ -837,16 +857,15 @@ def _write_html(meta: dict, preview_name: str | None, model_path: Path) -> None:
         """
     )
     if preview_name:
-        html += f'<img src="{preview_name}" alt="preview">'
+        html += f'<img src="{escape(preview_name, quote=True)}" alt="preview">'
     if meta.get("aboutThisVersion"):
-        html += f"<h2>About this version</h2><p>{meta['aboutThisVersion']}</p>"
-    if (tags := meta.get("activationTags")):
-        html += "<h2>Activation Tags</h2>" + "".join(
-            f'<span class="tag">{t}</span>' for t in tags
-        )
+        html += "<h2>About this version</h2><p>" + escape(str(meta["aboutThisVersion"])) + "</p>"
+    if tags := meta.get("activationTags"):
+        html += "<h2>Activation Tags</h2>" + "".join(f'<span class="tag">{escape(str(t))}</span>' for t in tags)
+    sha_value = escape(str(meta.get("sha256", "")))
     html += f"""
         <hr><p><small>Generated by <b>Arc en Ciel Link</b><br>
-        sha256: {meta.get('sha256','')}</small></p></html>
+        sha256: {sha_value}</small></p></html>
         """
     (model_path.parent / (model_path.stem + ".arcenciel.html")).write_text(
         html,
@@ -947,7 +966,14 @@ def _worker() -> None:
                 last_progress["ts"] = now
                 report_progress(job.get("id", 0), progress=pct)
 
-            _download_with_retry(url_raw, tmp_path, _progress_cb)
+            request_headers, allow_redirects = _private_download_options(job, url_raw)
+            _download_with_retry(
+                url_raw,
+                tmp_path,
+                _progress_cb,
+                request_headers=request_headers,
+                allow_redirects=allow_redirects,
+            )
 
             sha_local = sha256_of_file(tmp_path)
             if sha_server and sha_local != sha_server:
@@ -999,46 +1025,11 @@ def list_subfolders_roots(kind: str) -> list[Path]:
         return []
 
 
-def _inventory_watch_dirs() -> set[Path]:
-    roots = set()
-    for kind in ("checkpoints", "loras", "vae", "embeddings"):
-        for root in list_subfolders_roots(kind):
-            roots.add(root)
-    return roots
-
-
-def _inventory_signature() -> tuple[tuple[str, int], ...]:
-    signature: list[tuple[str, int]] = []
-    for root in _inventory_watch_dirs():
-        try:
-            stat = root.stat()
-            newest = getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))
-            try:
-                for child in root.iterdir():
-                    try:
-                        child_stat = child.stat()
-                    except (FileNotFoundError, PermissionError):
-                        continue
-                    child_mtime = getattr(child_stat, "st_mtime_ns", int(child_stat.st_mtime * 1_000_000_000))
-                    if child_mtime > newest:
-                        newest = child_mtime
-            except (FileNotFoundError, PermissionError):
-                pass
-            signature.append((str(root), int(newest)))
-        except FileNotFoundError:
-            signature.append((str(root), 0))
-    return tuple(sorted(signature))
-
-
 def _inventory_worker() -> None:
-    last_signature: tuple[tuple[str, int], ...] | None = None
     while True:
         try:
-            signature = _inventory_signature()
-            if signature != last_signature:
-                hashes = list_model_hashes()
-                _sync_inventory(hashes)
-                last_signature = signature
+            hashes = list_model_hashes()
+            _sync_inventory(hashes)
         except Exception:
             pass
         time.sleep(3600)
@@ -1087,11 +1078,7 @@ def _iter_cached_paths() -> dict[str, str]:
     from aec_link_utils import _ensure_cache
 
     cache = _ensure_cache()
-    model_files = {
-        v["hash"]: k
-        for k, v in cache.items()
-        if isinstance(v, dict) and v.get("hash") and Path(k).exists()
-    }
+    model_files = {v["hash"]: k for k, v in cache.items() if isinstance(v, dict) and v.get("hash") and Path(k).exists()}
     return model_files
 
 
@@ -1104,7 +1091,7 @@ def initialize() -> None:
     _apply_config(_cfg)
     start_worker()
     schedule_inventory_push()
-    if LINK_KEY or API_KEY:
+    if LINK_KEY:
         set_connection_enabled(True, silent=True)
     if _cfg.get("enabled"):
         toggle_worker(True)

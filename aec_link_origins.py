@@ -8,9 +8,7 @@ _LOCAL_TLDS = (".local", ".lan")
 
 
 def _is_arcenciel_host(host: str) -> bool:
-    return host in _ALLOWED_DOMAIN_NAMES or any(
-        host.endswith(suffix) for suffix in _ALLOWED_DOMAIN_SUFFIXES
-    )
+    return host in _ALLOWED_DOMAIN_NAMES or any(host.endswith(suffix) for suffix in _ALLOWED_DOMAIN_SUFFIXES)
 
 
 def is_private_host(host: str) -> bool:
