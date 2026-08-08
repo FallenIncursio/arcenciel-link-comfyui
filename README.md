@@ -78,7 +78,7 @@ ruff check .
 pytest -q
 ```
 
-CI verifies Python 3.11. A `vX.Y.Z` tag must match `pyproject.toml` and `aec_link_version.py`; it creates a GitHub Release and publishes through the pinned `Comfy-Org/publish-node-action` when `REGISTRY_ACCESS_TOKEN` is configured.
+CI verifies Python 3.11. A `vX.Y.Z` tag must match `pyproject.toml` and `aec_link_version.py`; it creates a GitHub Release and publishes through the pinned `Comfy-Org/publish-node-action` when `REGISTRY_ACCESS_TOKEN` is configured. Retry a failed registry publish without moving the tag by dispatching `publish.yml` with `release_tag=vX.Y.Z`; the workflow checks out and revalidates that immutable tag before publishing.
 
 ## License
 
