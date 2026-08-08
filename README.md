@@ -5,7 +5,8 @@ ArcEnCiel Link sends one-click model downloads from [arcenciel.io](https://arcen
 ## Version 2.0
 
 - Link Keys (`lk_...`) are the only supported Link credential.
-- The local control API is registered on ComfyUI's native server, normally `http://127.0.0.1:8188`.
+- The browser-facing control API uses a dedicated loopback-only bridge on `http://127.0.0.1:8000`.
+- Native ComfyUI routes on port `8188` remain available for compatible same-origin setups.
 - Private downloads use a short-lived header grant bound to the configured ArcEnCiel HTTPS origin; redirects are refused.
 - Inventory reconciliation performs a complete hourly scan across every Comfy model root.
 - Generated HTML sidecars escape all remote metadata.
@@ -29,7 +30,7 @@ Restart ComfyUI after installation.
 1. Start ComfyUI with the node installed.
 2. Open the ArcEnCiel Link panel on [arcenciel.io](https://arcenciel.io).
 3. Generate or select a Link Key and press **Connect**.
-4. Select the detected `8188` endpoint if multiple WebUIs are running.
+4. Select the detected `8000` endpoint if multiple WebUIs are running.
 
 There is no separate ArcEnCiel settings node. Fallback configuration is stored at `ComfyUI/user/arcenciel-link/config.json`.
 
@@ -45,11 +46,11 @@ There is no separate ArcEnCiel settings node. Fallback configuration is stored a
   "backoff_base": 2,
   "save_html_preview": false,
   "allow_private_origins": false,
-  "bridge_port": 0
+  "bridge_port": 8000
 }
 ```
 
-`bridge_port: 0` uses native ComfyUI routes only. An explicitly configured positive port keeps the older loopback bridge available during migration. HTTP ArcEnCiel endpoints and private origins require `ARCENCIEL_DEV=1`.
+ComfyUI's global origin guard rejects requests from `arcenciel.io` before native custom-node routes run. The default loopback-only bridge therefore keeps browser integration working without weakening ComfyUI's middleware for other routes. Set `bridge_port` to `0` only when ComfyUI itself is launched with an explicit compatible CORS configuration. HTTP ArcEnCiel endpoints and private origins require `ARCENCIEL_DEV=1`.
 
 Environment overrides:
 

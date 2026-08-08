@@ -11,7 +11,12 @@ _DEFAULT_CONFIG = {
     "backoff_base": 2,
     "save_html_preview": False,
     "allow_private_origins": False,
-    "bridge_port": 0,
+    # ComfyUI's global origin guard rejects requests from arcenciel.io before
+    # native custom-node routes run. Keep the loopback-only bridge enabled by
+    # default so browsers can reach the extension without weakening ComfyUI's
+    # middleware for every other route. Set this to 0 only when ComfyUI itself
+    # is launched with an explicit compatible CORS configuration.
+    "bridge_port": 8000,
 }
 
 _DEV_URL = "http://localhost:3000/api/link"

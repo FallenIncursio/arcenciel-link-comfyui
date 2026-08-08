@@ -111,6 +111,15 @@ def test_config_removes_retired_credentials_and_writes_private_file(monkeypatch,
     assert config_file.stat().st_mode & 0o777 == 0o600
 
 
+def test_default_browser_bridge_stays_enabled(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.json"
+    monkeypatch.setattr(aec_link_config, "_config_path", lambda: config_file)
+
+    loaded = aec_link_config.load_config()
+
+    assert loaded["bridge_port"] == 8000
+
+
 def test_native_comfy_routes_are_registered(monkeypatch):
     registered = []
 
