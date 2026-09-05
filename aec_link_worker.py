@@ -21,6 +21,7 @@ from urllib.parse import unquote, urljoin, urlparse, urlunparse
 import websocket
 
 from aec_link_config import get_storage_dir, load_config, save_config
+from aec_link_runtime_config import validate_worker_change
 from aec_link_utils import (
     download_file,
     get_http_session,
@@ -278,6 +279,7 @@ def _apply_worker_state(enable: bool, *, link_key=None) -> bool:
     changed = False
 
     sanitized_link = _sanitize_link_key(link_key)
+    validate_worker_change(cfg, enable, sanitized_link)
     if sanitized_link is not None and sanitized_link != cfg.get("link_key", ""):
         cfg["link_key"] = sanitized_link
         changed = True
@@ -288,7 +290,7 @@ def _apply_worker_state(enable: bool, *, link_key=None) -> bool:
 
     if changed:
         save_config(cfg)
-        _apply_config(cfg)
+    _apply_config(cfg)
 
     if enable:
         set_connection_enabled(True, silent=True)

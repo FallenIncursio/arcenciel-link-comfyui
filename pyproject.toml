@@ -1,7 +1,7 @@
 [project]
 name = "arcenciel-link-comfy"
 description = "Bring your ArcEnCiel models straight into ComfyUI with one click. Includes Link Key support, remote worker control, inventory sync, and sidecar generation."
-version = "2.0.0"
+version = "2.1.0"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -25,6 +25,7 @@ DisplayName = "ArcEnCiel Link"
 py-modules = [
   "aec_link_bridge",
   "aec_link_config",
+  "aec_link_runtime_config",
   "aec_link_origins",
   "aec_link_runtime",
   "aec_link_utils",

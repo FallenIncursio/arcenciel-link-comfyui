@@ -2,6 +2,8 @@ import json
 import os
 from pathlib import Path
 
+from aec_link_runtime_config import apply_environment, persistent_payload
+
 _DEFAULT_CONFIG = {
     "base_url": "https://link.arcenciel.io/api/link",
     "link_key": "",
@@ -56,13 +58,6 @@ def _write_private_json(path: Path, payload: dict) -> None:
     os.replace(temporary, path)
 
 
-def _apply_env_overrides(cfg: dict) -> None:
-    if os.getenv("ARCENCIEL_LINK_URL"):
-        cfg["base_url"] = os.getenv("ARCENCIEL_LINK_URL", "").strip().rstrip("/")
-    if os.getenv("ARCENCIEL_LINK_KEY"):
-        cfg["link_key"] = os.getenv("ARCENCIEL_LINK_KEY", "").strip()
-
-
 def load_config() -> dict:
     cfg = dict(_DEFAULT_CONFIG)
     path = _config_path()
@@ -82,7 +77,7 @@ def load_config() -> dict:
     if dev_mode and cfg.get("base_url") == _DEFAULT_CONFIG["base_url"]:
         cfg["base_url"] = _DEV_URL
 
-    _apply_env_overrides(cfg)
+    apply_environment(cfg, dev_mode=dev_mode)
     cfg["_dev_mode"] = dev_mode
     return cfg
 
@@ -90,7 +85,10 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = dict(cfg)
-    payload.pop("_dev_mode", None)
-    payload.pop("api_key", None)
-    _write_private_json(path, payload)
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(stored, dict):
+            stored = {}
+    except (OSError, ValueError):
+        stored = {}
+    _write_private_json(path, persistent_payload(cfg, stored))
