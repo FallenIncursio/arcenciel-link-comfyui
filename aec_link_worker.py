@@ -20,6 +20,7 @@ from urllib.parse import unquote, urljoin, urlparse, urlunparse
 
 import websocket
 
+import aec_link_job_attempt as job_attempt
 from aec_link_config import get_storage_dir, load_config, save_config
 from aec_link_runtime_config import validate_worker_change
 from aec_link_utils import (
@@ -233,6 +234,7 @@ def _sanitize_link_key(value):
 def headers() -> dict:
     request_headers = {
         "x-arcenciel-link-client": f"{CLIENT_ID}/{VERSION}",
+        "x-arcenciel-link-runtime": job_attempt.RUNTIME_ID,
         "x-arcenciel-link-protocol": str(PROTOCOL_VERSION),
         "x-arcenciel-link-capabilities": ",".join(CAPABILITIES),
     }
@@ -266,6 +268,7 @@ def _send_worker_state(running: bool | None = None) -> None:
             "clientVersion": VERSION,
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": list(CAPABILITIES),
+            "runtimeId": job_attempt.RUNTIME_ID,
         }
     )
 
@@ -424,6 +427,11 @@ def _handle_control(msg: dict) -> None:
     response = {"command": command}
     if request_id is not None:
         response["requestId"] = request_id
+    if command == "cancel_job":
+        response["ok"] = job_attempt.cancel_attempt(msg.get("jobId"), msg.get("attemptId"), msg.get("runtimeId"))
+        # The lease cancel_ack is sent only after the downloader closes and removes its partial file.
+        _send_control_ack(response)
+        return
     if command == "set_worker_state":
         raw_enable = msg.get("enable")
         enable = raw_enable not in (False, "false", 0)
@@ -531,6 +539,7 @@ def _ensure_socket() -> None:
                 [
                     f"x-arcenciel-link-client: {CLIENT_ID}/{VERSION}",
                     f"x-arcenciel-link-protocol: {PROTOCOL_VERSION}",
+                    f"x-arcenciel-link-runtime: {job_attempt.RUNTIME_ID}",
                     f"x-arcenciel-link-capabilities: {','.join(CAPABILITIES)}",
                 ]
             )
@@ -616,28 +625,25 @@ def queue_next_job():
 
 
 def report_progress(job_id: int, *, progress: int = None, state: str = None, message: str | None = None):
-    if _open_evt.is_set():
-        _sock.send(
-            json.dumps(
-                {
-                    "type": "progress",
-                    "jobId": job_id,
-                    "progress": progress,
-                    "state": state,
-                    "message": message,
-                }
-            )
-        )
-        if state == "DONE":
-            _sock.send('{"type":"poll"}')
+    active = job_attempt.ACTIVE
+    fields = active.fields() if active is not None and active.job["id"] == job_id else {}
+    if active is not None:
+        active.check()
+    payload = {
+        k: v for k, v in {"progress": progress, "state": state, "message": message, **fields}.items() if v is not None
+    }
+    if _open_evt.is_set() and not (fields.get("attemptId") and state in ("DONE", "ERROR")):
+        _sock.send(json.dumps({"type": "progress", "jobId": job_id, **payload}))
     else:
-        payload = {k: v for k, v in [("progress", progress), ("state", state), ("message", message)] if v is not None}
-        SESSION.patch(
-            f"{BASE_URL}/queue/{job_id}/progress",
-            json=payload,
-            headers=headers(),
-            timeout=TIMEOUT,
-        )
+        with SESSION.patch(
+            f"{BASE_URL}/queue/{job_id}/progress", json=payload, headers=headers(), timeout=TIMEOUT
+        ) as reply:
+            if reply.status_code == 409 and active is not None:
+                if reply.json().get("state") == "DONE" and state == "DONE":
+                    return
+                active.stop()
+                raise job_attempt.AttemptStopped("Attempt no longer active")
+            reply.raise_for_status()
 
 
 def push_inventory(hashes: list[str]) -> None:
@@ -744,6 +750,8 @@ def _download_with_retry(
 ) -> None:
     for attempt in range(1, MAX_RETRIES + 1):
         try:
+            if job_attempt.ACTIVE:
+                job_attempt.ACTIVE.check()
             download_file(
                 url,
                 tmp,
@@ -752,11 +760,17 @@ def _download_with_retry(
                 allow_redirects=allow_redirects,
             )
             return
+        except job_attempt.AttemptStopped:
+            tmp.unlink(missing_ok=True)
+            raise
         except Exception:
             tmp.unlink(missing_ok=True)
             if attempt == MAX_RETRIES:
                 raise
-            time.sleep(BACKOFF_BASE**attempt + random.uniform(0, 1))
+            if job_attempt.ACTIVE:
+                job_attempt.ACTIVE.wait(BACKOFF_BASE**attempt + random.uniform(0, 1))
+            else:
+                time.sleep(BACKOFF_BASE**attempt + random.uniform(0, 1))
 
 
 _RND_PREFIX = re.compile(
@@ -915,7 +929,10 @@ def _worker() -> None:
             time.sleep(SLEEP_AFTER_ERROR)
             continue
 
+        attempt = None
+        tmp_path = None
         try:
+            attempt = job_attempt.JobAttempt(job, SESSION, BASE_URL, headers).start()
             ver = job.get("version") or {}
             meta = ver.get("meta") or {}
             url_raw = ver.get("externalDownloadUrl") or ver.get("filePath")
@@ -953,7 +970,7 @@ def _worker() -> None:
                 report_progress(job.get("id", 0), state="DONE", progress=100)
                 continue
 
-            tmp_path = dst_path.with_suffix(".part")
+            tmp_path = dst_path.with_name(dst_path.name + "." + (attempt.token or "legacy") + ".part")
             report_progress(job.get("id", 0), state="DOWNLOADING", progress=0)
             last_progress = {"pct": 0, "ts": time.monotonic()}
 
@@ -982,6 +999,8 @@ def _worker() -> None:
                 tmp_path.unlink(missing_ok=True)
                 raise RuntimeError("SHA-256 mismatch")
 
+            attempt.renew()
+            attempt.check()
             tmp_path.rename(dst_path)
 
             preview_name = _save_preview(meta.get("preview"), dst_path)
@@ -992,10 +1011,20 @@ def _worker() -> None:
             hashes = update_cached_hash(dst_path, sha_local)
             _sync_inventory(hashes)
             report_progress(job.get("id", 0), state="DONE", progress=100)
+        except job_attempt.AttemptStopped:
+            print("[AEC-LINK] download stopped", flush=True)
         except Exception as e:
             print(f"[AEC-LINK] worker error: {e}")
-            report_progress(job.get("id", 0), state="ERROR", message=str(e))
+            try:
+                report_progress(job.get("id", 0), state="ERROR", message=str(e))
+            except Exception:
+                pass
             time.sleep(SLEEP_AFTER_ERROR)
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+            if attempt is not None:
+                attempt.finish()
 
 
 def toggle_worker(enable: bool) -> None:
