@@ -113,7 +113,13 @@ def _kind_to_folder_name(kind: str) -> str:
 
 
 def list_subfolders(kind: str) -> list[str]:
-    roots = _get_folder_paths(_kind_to_folder_name(kind))
+    roots = [
+        resolve_target_path(
+            {"checkpoint": "models/Checkpoint", "lora": "models/Lora", "vae": "models/VAE", "embedding": "embeddings"}[
+                kind.lower()
+            ]
+        )
+    ]
     results: set[str] = set()
 
     for root in roots:

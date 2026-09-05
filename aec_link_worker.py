@@ -20,6 +20,7 @@ from urllib.parse import unquote, urljoin, urlparse, urlunparse
 
 import websocket
 
+import aec_link_device_tools as device_tools
 import aec_link_job_attempt as job_attempt
 import aec_link_setup_check as setup_check
 from aec_link_config import get_storage_dir, load_config, save_config
@@ -428,6 +429,31 @@ def _handle_control(msg: dict) -> None:
     response = {"command": command}
     if request_id is not None:
         response["requestId"] = request_id
+    if command == "cancel_device_tool":
+        device_tools.cancel(msg, job_attempt.RUNTIME_ID)
+        return
+    if command == "device_tool":
+        from aec_link_utils import _inventory_roots
+
+        def repair(path, digest, meta, check):
+            return device_tools.repair_missing(path, digest, meta, check, SESSION, SAVE_HTML_PREVIEW)
+
+        def synced(hashes):
+            KNOWN_HASHES.clear()
+            KNOWN_HASHES.update(hashes)
+
+        device_tools.start(
+            msg,
+            runtime_id=job_attempt.RUNTIME_ID,
+            session=SESSION,
+            base_url=BASE_URL,
+            headers=headers(),
+            roots=_inventory_roots,
+            repair=repair,
+            sync_local=synced,
+            busy=job_attempt.ACTIVE is not None,
+        )
+        return
     if command == "setup_check":
         setup_check.start_check(
             msg,
@@ -661,11 +687,11 @@ def report_progress(job_id: int, *, progress: int = None, state: str = None, mes
 
 def push_inventory(hashes: list[str]) -> None:
     if _open_evt.is_set():
-        _sock.send(json.dumps({"type": "inventory", "hashes": hashes}))
+        _sock.send(json.dumps({"type": "inventory", "hashes": hashes, "runtimeId": job_attempt.RUNTIME_ID}))
     else:
         SESSION.post(
             f"{BASE_URL}/inventory",
-            json={"hashes": hashes},
+            json={"hashes": hashes, "runtimeId": job_attempt.RUNTIME_ID},
             headers=headers(),
             timeout=TIMEOUT,
         )
@@ -906,9 +932,9 @@ def _already_have(hash_: str | None) -> bool:
     return hash_ in KNOWN_HASHES if hash_ else False
 
 
-def _sync_inventory(hashes: list[str]) -> None:
+def _sync_inventory(hashes: list[str], force=False) -> None:
     unique_count = len(KNOWN_HASHES)
-    if len(hashes) == unique_count and KNOWN_HASHES.issuperset(hashes):
+    if not force and len(hashes) == unique_count and KNOWN_HASHES.issuperset(hashes):
         return
     KNOWN_HASHES.clear()
     KNOWN_HASHES.update(hashes)
@@ -1016,14 +1042,28 @@ def _worker() -> None:
             attempt.check()
             tmp_path.rename(dst_path)
 
-            preview_name = _save_preview(meta.get("preview"), dst_path)
-            _write_info_json(meta, sha_local, preview_name, dst_path)
-            if SAVE_HTML_PREVIEW:
-                _write_html(meta | {"sha256": sha_local}, preview_name, dst_path)
+            sidecar_warning = False
+            try:
+                preview_name = _save_preview(meta.get("preview"), dst_path)
+                _write_info_json(meta, sha_local, preview_name, dst_path)
+                if SAVE_HTML_PREVIEW:
+                    _write_html(meta | {"sha256": sha_local}, preview_name, dst_path)
+                sidecar_warning = bool(meta.get("preview") and not preview_name)
+            except job_attempt.AttemptStopped:
+                raise
+            except Exception:
+                sidecar_warning = True
 
             hashes = update_cached_hash(dst_path, sha_local)
             _sync_inventory(hashes)
-            report_progress(job.get("id", 0), state="DONE", progress=100)
+            report_progress(
+                job.get("id", 0),
+                state="DONE",
+                progress=100,
+                message="SIDECAR_WARNING: Model saved. Repair missing metadata in Device tools."
+                if sidecar_warning
+                else None,
+            )
         except job_attempt.AttemptStopped:
             print("[AEC-LINK] download stopped", flush=True)
         except Exception as e:
@@ -1073,7 +1113,7 @@ def _inventory_worker() -> None:
     while True:
         try:
             hashes = list_model_hashes()
-            _sync_inventory(hashes)
+            _sync_inventory(hashes, force=True)
         except Exception:
             pass
         time.sleep(3600)

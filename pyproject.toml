@@ -1,7 +1,7 @@
 [project]
 name = "arcenciel-link-comfy"
 description = "Bring your ArcEnCiel models straight into ComfyUI with one click. Includes Link Key support, remote worker control, inventory sync, and sidecar generation."
-version = "2.3.0"
+version = "2.4.0"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -33,6 +33,7 @@ py-modules = [
   "aec_link_worker",
   "aec_link_job_attempt",
   "aec_link_setup_check",
+  "aec_link_device_tools",
 ]
 
 [tool.pytest.ini_options]
@@ -45,3 +46,6 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.setuptools.data-files]
+"web" = ["web/arcenciel-link.js"]

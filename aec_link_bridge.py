@@ -99,6 +99,24 @@ async def _generate_sidecars(_request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def _device_status(_request: web.Request) -> web.Response:
+    import aec_link_device_tools as device_tools
+    import aec_link_job_attempt as job_attempt
+    import aec_link_worker as worker
+    from aec_link_version import VERSION
+
+    return web.json_response(
+        {
+            "version": VERSION,
+            "connected": worker._open_evt.is_set(),
+            "running": worker.RUNNING.is_set(),
+            "runtimeId": job_attempt.RUNTIME_ID,
+            "tool": device_tools.status(),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 def register_prompt_server_routes(*, allow_private: bool) -> bool:
     """Register the bridge on ComfyUI's own HTTP server (normally port 8188)."""
 
@@ -130,6 +148,7 @@ def register_prompt_server_routes(*, allow_private: bool) -> bool:
         return web.Response(text="ok")
 
     routes.get("/arcenciel-link/ping")(guarded(ping))
+    routes.get("/arcenciel-link/status")(guarded(_device_status))
     routes.options("/arcenciel-link/{tail:.*}")(guarded(ping))
     routes.post("/arcenciel-link/toggle_link")(guarded(_toggle_link))
     routes.get("/arcenciel-link/folders/{kind}")(guarded(_folders))
@@ -204,6 +223,7 @@ class BridgeServer:
             return web.Response(text="ok")
 
         app.router.add_route("GET", "/arcenciel-link/ping", ping)
+        app.router.add_route("GET", "/arcenciel-link/status", _device_status)
         app.router.add_route("OPTIONS", "/arcenciel-link/{tail:.*}", ping)
         app.router.add_route("POST", "/arcenciel-link/toggle_link", _toggle_link)
         app.router.add_route("GET", "/arcenciel-link/folders/{kind}", _folders)
