@@ -1006,7 +1006,12 @@ def _worker() -> None:
                 continue
 
             if sha_server and _already_have(sha_server):
-                report_progress(job.get("id", 0), state="DONE", progress=100)
+                report_progress(
+                    job.get("id", 0),
+                    state="DONE",
+                    progress=100,
+                    message="ALREADY_PRESENT: Model already exists on this device.",
+                )
                 continue
 
             tmp_path = dst_path.with_name(dst_path.name + "." + (attempt.token or "legacy") + ".part")
