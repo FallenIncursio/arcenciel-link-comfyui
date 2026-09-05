@@ -21,6 +21,7 @@ from urllib.parse import unquote, urljoin, urlparse, urlunparse
 import websocket
 
 import aec_link_job_attempt as job_attempt
+import aec_link_setup_check as setup_check
 from aec_link_config import get_storage_dir, load_config, save_config
 from aec_link_runtime_config import validate_worker_change
 from aec_link_utils import (
@@ -427,6 +428,18 @@ def _handle_control(msg: dict) -> None:
     response = {"command": command}
     if request_id is not None:
         response["requestId"] = request_id
+    if command == "setup_check":
+        setup_check.start_check(
+            msg,
+            runtime_id=job_attempt.RUNTIME_ID,
+            root_for=resolve_target_path,
+            session=SESSION,
+            base_url=BASE_URL,
+            headers=headers(),
+            reply=_send_ws_payload,
+            busy=job_attempt.ACTIVE is not None,
+        )
+        return
     if command == "cancel_job":
         response["ok"] = job_attempt.cancel_attempt(msg.get("jobId"), msg.get("attemptId"), msg.get("runtimeId"))
         # The lease cancel_ack is sent only after the downloader closes and removes its partial file.
