@@ -86,3 +86,30 @@ def test_desktop_key_can_be_repaired_without_an_environment_override(isolated_co
     with warnings.catch_warnings(record=True):
         cfg = load()
     validate_worker_change(cfg, True, "lk_" + "c" * 32)
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_immediate_websocket_handshake_announces_the_startup_preference(monkeypatch, enabled):
+    import threading
+    from types import SimpleNamespace
+
+    import aec_link_worker as worker
+
+    monkeypatch.setattr(worker, "RUNNING", threading.Event())
+    monkeypatch.setattr(
+        worker,
+        "_cfg",
+        {"base_url": "https://link.arcenciel.io/api/link", "link_key": "lk_" + "a" * 32, "enabled": enabled},
+    )
+    monkeypatch.setattr(worker, "start_worker", lambda: None)
+    monkeypatch.setattr(worker, "schedule_inventory_push", lambda: None)
+    messages = []
+    monkeypatch.setattr(worker, "_send_ws_payload", lambda message, **_options: messages.append(message))
+    monkeypatch.setattr(
+        worker,
+        "set_connection_enabled",
+        lambda *_args, **_kwargs: worker._on_open(SimpleNamespace(send=lambda _message: None)),
+    )
+    worker.initialize()
+    announced = [message["running"] for message in messages if message["type"] == "worker_state"]
+    assert announced == [enabled]

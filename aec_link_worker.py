@@ -1093,10 +1093,11 @@ def initialize() -> None:
     _apply_config(_cfg)
     start_worker()
     schedule_inventory_push()
+    # A fast WebSocket handshake must observe the final startup state. Otherwise
+    # on_open can publish running=False and leave an enabled worker offline in the UI.
+    toggle_worker(bool(_cfg.get("enabled") and LINK_KEY))
     if LINK_KEY:
         set_connection_enabled(True, silent=True)
-    if _cfg.get("enabled"):
-        toggle_worker(True)
 
 
 def shutdown() -> None:
