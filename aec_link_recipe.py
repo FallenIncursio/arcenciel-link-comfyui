@@ -16,7 +16,19 @@ def build_profile():
     return {
         "schemaVersion": 1,
         "host": "comfyui",
-        "fields": ["prompt", "negativePrompt", "seed", "steps", "cfg", "width", "height", "sampler", "scheduler"],
+        "fields": [
+            "prompt",
+            "negativePrompt",
+            "seed",
+            "steps",
+            "cfg",
+            "width",
+            "height",
+            "sampler",
+            "scheduler",
+            "checkpoint",
+        ]
+        + (["loras"] if "LoraLoader" in nodes.NODE_CLASS_MAPPINGS else []),
         "samplers": list(inputs.get("sampler_name", [[]])[0]),
         "schedulers": list(inputs.get("scheduler", [[]])[0]),
         # JavaScript graph widget values cannot represent arbitrary uint64 seeds exactly.
