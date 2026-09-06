@@ -1,3 +1,4 @@
+import { draftAdapter } from "./draft-adapter.js";
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 app.registerExtension({
@@ -34,6 +35,7 @@ app.registerExtension({
             if (!response.ok) throw new Error("Status unavailable");
             const data = await response.json();
             status.textContent = `Link ${data.version} · ${data.connected ? "Connected" : "Disconnected"} · Downloads ${data.running ? "enabled" : "paused"}`;
+            status.textContent += ` · ${data.recipeStatus || "Recipe check unavailable"}`;
             if (data.tool)
               status.textContent += ` · ${data.tool.action}: ${data.tool.state} · ${data.tool.processed}/${data.tool.total} · ${data.tool.warnings} warnings`;
           } catch {
@@ -45,9 +47,15 @@ app.registerExtension({
         }
         button.addEventListener("click", refresh);
         panel.append(title, status, button, link);
+        const inbox = document.createElement("div");
+        panel.append(inbox);
+        const disposeInbox = window.AECLinkDrafts.mount(inbox, draftAdapter);
         el.replaceChildren(panel);
         void refresh();
-        return () => button.removeEventListener("click", refresh);
+        return () => {
+          disposeInbox();
+          button.removeEventListener("click", refresh);
+        };
       },
     });
   },

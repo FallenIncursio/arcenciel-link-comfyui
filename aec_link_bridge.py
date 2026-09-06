@@ -102,6 +102,7 @@ async def _generate_sidecars(_request: web.Request) -> web.Response:
 async def _device_status(_request: web.Request) -> web.Response:
     import aec_link_device_tools as device_tools
     import aec_link_job_attempt as job_attempt
+    import aec_link_recipe as recipe
     import aec_link_worker as worker
     from aec_link_version import VERSION
 
@@ -112,6 +113,7 @@ async def _device_status(_request: web.Request) -> web.Response:
             "running": worker.RUNNING.is_set(),
             "runtimeId": job_attempt.RUNTIME_ID,
             "tool": device_tools.status(),
+            "recipeStatus": recipe.REPORT_STATE,
         },
         headers={"Cache-Control": "no-store"},
     )
@@ -147,6 +149,29 @@ def register_prompt_server_routes(*, allow_private: bool) -> bool:
     async def ping(_request: web.Request) -> web.Response:
         return web.Response(text="ok")
 
+    async def draft_editor(request: web.Request) -> web.Response:
+        # Native server only; never registered on the Arc-origin CORS bridge.
+        if request.headers.get("X-AEC-Link-Editor") != "1" or request.headers.get("Sec-Fetch-Site") != "same-origin":
+            return web.json_response({"code": "NATIVE_EDITOR_REQUIRED"}, status=403)
+        raw = await request.read()
+        if len(raw) > 100_000:
+            return web.json_response({"code": "EVENT_TOO_LARGE"}, status=413)
+        import json
+
+        import aec_link_drafts as drafts
+        import aec_link_job_attempt as job_attempt
+        import aec_link_worker as worker
+
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            return web.json_response({"code": "INVALID_EVENT"}, status=400)
+        data, status = await asyncio.to_thread(
+            drafts.post, worker, job_attempt.RUNTIME_ID, request.match_info["action"], body
+        )
+        return web.json_response(data, status=status, headers={"Cache-Control": "no-store"})
+
+    routes.post("/arcenciel-link/editor/{action}")(draft_editor)
     routes.get("/arcenciel-link/ping")(guarded(ping))
     routes.get("/arcenciel-link/status")(guarded(_device_status))
     routes.options("/arcenciel-link/{tail:.*}")(guarded(ping))

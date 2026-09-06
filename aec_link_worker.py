@@ -342,6 +342,9 @@ def _on_open(ws) -> None:
     _suspend_until = 0.0
     _suspend_notice_logged = False
     _set_connection_state("connected", f"[AEC-LINK] connected to {_display_target()}")
+    import aec_link_recipe as recipe
+
+    recipe.start_reporting(__import__(__name__, fromlist=["*"]), job_attempt.RUNTIME_ID)
     _send_worker_state()
     ws.send('{"type":"poll"}')
 
@@ -441,6 +444,9 @@ def _handle_control(msg: dict) -> None:
         def synced(hashes):
             KNOWN_HASHES.clear()
             KNOWN_HASHES.update(hashes)
+            import aec_link_resources as resources
+
+            resources.request_refresh()
 
         device_tools.start(
             msg,
@@ -931,7 +937,9 @@ def _write_html(meta: dict, preview_name: str | None, model_path: Path) -> None:
 
 
 def _already_have(hash_: str | None) -> bool:
-    return hash_ in KNOWN_HASHES if hash_ else False
+    from aec_link_resources import has_verified_file
+
+    return has_verified_file(hash_)
 
 
 def _sync_inventory(hashes: list[str], force=False) -> None:
@@ -1061,6 +1069,9 @@ def _worker() -> None:
             except Exception:
                 sidecar_warning = True
 
+            import aec_link_resources as resources
+
+            resources.request_refresh()
             hashes = update_cached_hash(dst_path, sha_local)
             _sync_inventory(hashes)
             report_progress(
