@@ -15,6 +15,7 @@ def build_profile():
     inputs = sampler.INPUT_TYPES()["required"] if sampler else {}
     return {
         "schemaVersion": 1,
+        "draftSelection": 1,
         "host": "comfyui",
         "fields": [
             "prompt",

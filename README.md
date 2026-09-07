@@ -2,16 +2,22 @@
 
 ArcEnCiel Link connects [arcenciel.io](https://arcenciel.io) to ComfyUI: download models, review image settings in your generator, and prepare the resources they require.
 
-## Reliable native inbox (2.5.2)
+## Confirmed drafts and resource choices (2.5.3)
 
-The compact inbox stays inside txt2img on Forge. Waiting drafts, history and backups are separated;
-connection checks explain recovery steps without resending a draft. The receiving tab recovers after
-closing another tab; **Receive here** can request ownership. Existing generator edits require review.
-Native imports are registered before the first browser session starts and confirmed through actual
-editor values. Use **Check connection** after a temporary failure, or **Reload Forge** after a UI restart.
+Drafts wait until you confirm Apply. Review image fields and choose whether to use the image checkpoint,
+LoRAs and VAE/modules; **Keep my resources** preserves your existing selections. History combines server
+entries and local backups, with Undo and export/removal on the same row. Update the Arc server together
+with the extension to use the resource-selection contract. Downloads remain compatible.
+
+## Reliable native inbox (2.5.3)
+
+The native Link inbox separates Waiting from History. Local backups appear on their history entry;
+connection checks explain recovery steps without resending a draft. Every editor requires explicit
+confirmation before applying. Native values are read back before the receipt is confirmed.
+Use **Check connection** after a temporary failure and reload the page after restarting the host.
 Update the extension, restart its host, and reload existing browser tabs. Downloads remain compatible.
 
-## Send image settings and prepare resources (2.5.2)
+## Send image settings and prepare resources (2.5.3)
 
 Use **Send to Link** on an Arc image or in its metadata to check the original settings against this
 host. Unambiguous Steps, CFG, seed, size and sampling settings remain transferable when the image also
@@ -73,7 +79,7 @@ Explicit environment variables override saved desktop settings, including explic
 
 Pause/resume works during the current process. On restart, `ARCENCIEL_LINK_ENABLED` takes effect again. Changing an environment-managed key through the browser is rejected: update the runtime secret and restart the host. Existing desktop installations with valid settings need no migration. Protocol 2 and the browser toggle payload are unchanged.
 
-For an existing notebook host, use the [versioned Link setup notebook](https://github.com/FallenIncursio/arcenciel-link-webui/blob/v2.5.2/notebooks/ArcEnCiel_Link_Setup.ipynb). It supports WebUI/Forge, ComfyUI, and SwarmUI, validates the host checkout, installs the tagged extension, and loads Colab Secrets. It does not install a model or the host itself. Select **Remote / Colab** on the website and keep the bridge private. A health-probe log alone is not proof of an authenticated worker or a completed download.
+For an existing notebook host, use the [versioned Link setup notebook](https://github.com/FallenIncursio/arcenciel-link-webui/blob/v2.5.3/notebooks/ArcEnCiel_Link_Setup.ipynb). It supports WebUI/Forge, ComfyUI, and SwarmUI, validates the host checkout, installs the tagged extension, and loads Colab Secrets. It does not install a model or the host itself. Select **Remote / Colab** on the website and keep the bridge private. A health-probe log alone is not proof of an authenticated worker or a completed download.
 
 ## Configuration
 
